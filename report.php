@@ -189,6 +189,7 @@ class quiz_downloadsubmissions_report extends quiz_attempts_report {
         				qa.questionusageid 	AS qubaid,				/*4*/
         				qa.slot,									/*5*/
         				qa.questionid,								/*6*/
+                        q.qtype,
         				quiza.state,
         				quiza.timefinish,
         				quiza.timestart,
@@ -208,7 +209,8 @@ class quiz_downloadsubmissions_report extends quiz_attempts_report {
 														AND ej1_e.courseid 		= $course->id) */
 
 		        WHERE
-		        	quiza.preview = 0
+		            q.qtype = 'essay' /*reduce the number of records that need to be looped through further down in the code base - 8*/
+		        	AND quiza.preview = 0
 		        	AND quiza.id IS NOT NULL
 		        	AND 1 = 1
 		        	AND u.deleted = 0";
@@ -228,6 +230,8 @@ class quiz_downloadsubmissions_report extends quiz_attempts_report {
      */
     protected function download_essay_submissions($quiz, $cm, $course, $student_attempts, $data = null) {
     	global $CFG;
+
+        raise_memory_limit(MEMORY_EXTRA); //increase memory limit
 
     	// More efficient to load this here.
     	require_once($CFG->libdir.'/filelib.php');
@@ -249,7 +253,6 @@ class quiz_downloadsubmissions_report extends quiz_attempts_report {
     	foreach ($student_attempts as $student) {
 
     		// Construct download folder name.
-    		$userid = $student->userid;
     		$questionid = 'Q' . $student->slot;   // Or use slot number from {quiz_slots} table.
 
     		$prefix1 = str_replace('_', ' ', $questionid);
@@ -270,164 +273,157 @@ class quiz_downloadsubmissions_report extends quiz_attempts_report {
     		$qa = $quba->get_question_attempt($student->slot);
     		$quba_contextid = $quba->get_owning_context()->id;
 
-    		if ($qa->get_question()->get_type_name() == 'essay') {
-    		    $questionname = $qa->get_question()->name;
-    		    $prefix1 .= ' - ' . $questionname;
+            $questionname = $qa->get_question()->name;
+            $prefix1 .= ' - ' . $questionname;
 
-    		    $qa->get_question();  // Question object. (Has qt related info like responserequired, attachmentsrequired etc.)
+            $qa->get_question();  // Question object. (Has qt related info like responserequired, attachmentsrequired etc.)
 
-    		    // Writing question text to a file.
-    		    $questiontextfile = null;
-    		    if ($data->questiontext == 1) {
-        		    if(!empty($qa->get_question_summary())) {
-//     		        if(!empty($qa->get_question()->questiontext)) {
-        		        $qttextfilename = $questionid . ' - ' . $questionname . ' - ' . 'questiontext';
-        		        $qttextfileinfo = array (
-        		                'contextid' => $context->id,
-        		                'component' => 'quiz_downloadsubmissions',
-        		                'filearea'  => 'content',
-        		                'itemid'    => 0,
-        		                'filepath'  => '/',
-        		                'filename'  => $qttextfilename . '.text');
+            // Writing question text to a file.
+            $questiontextfile = null;
+            if ($data->questiontext == 1 && !empty($qa->get_question_summary())) { //combine the if statements to lower the need for compiler result guessing
+                $qttextfilename = $questionid . ' - ' . $questionname . ' - ' . 'questiontext';
+                $qttextfileinfo = array (
+                        'contextid' => $context->id,
+                        'component' => 'quiz_downloadsubmissions',
+                        'filearea'  => 'content',
+                        'itemid'    => 0,
+                        'filepath'  => '/',
+                        'filename'  => $qttextfilename . '.text');
 
-        		        if (!$fs->file_exists(
-        		                $qttextfileinfo['contextid'],
-        		                $qttextfileinfo['component'],
-        		                $qttextfileinfo['filearea'],
-        		                $qttextfileinfo['itemid'],
-        		                $qttextfileinfo['filepath'],
-        		                $qttextfileinfo['filename'])) {
-		                    $fs->create_file_from_string($qttextfileinfo, $qa->get_question_summary());
-// 		                    $fs->create_file_from_string($qttextfileinfo, $qa->get_question()->questiontext);
-		                }
+                if (!$fs->file_exists(
+                        $qttextfileinfo['contextid'],
+                        $qttextfileinfo['component'],
+                        $qttextfileinfo['filearea'],
+                        $qttextfileinfo['itemid'],
+                        $qttextfileinfo['filepath'],
+                        $qttextfileinfo['filename'])) {
+                    $fs->create_file_from_string($qttextfileinfo, $qa->get_question_summary());
+                }
 
-		                $questiontextfile = $fs->get_file(
-	                        $qttextfileinfo['contextid'],
-	                        $qttextfileinfo['component'],
-	                        $qttextfileinfo['filearea'],
-	                        $qttextfileinfo['itemid'],
-	                        $qttextfileinfo['filepath'],
-	                        $qttextfileinfo['filename']);
-        		    }
-    		    }
+                $questiontextfile = $fs->get_file(
+                    $qttextfileinfo['contextid'],
+                    $qttextfileinfo['component'],
+                    $qttextfileinfo['filearea'],
+                    $qttextfileinfo['itemid'],
+                    $qttextfileinfo['filepath'],
+                    $qttextfileinfo['filename']);
+            }
 
-    		    // Writing text response to a file.
-    		    $textfile = null;
-    		    $hastextresponse = false;
-    		    if ($data->textresponse == 1) {
-        		    if (!empty($qa->get_response_summary())) {
-        		        $hastextresponse = true;
-        		        $textfilename = $prefix1 . ' - ' . $prefix2 . ' - ' . 'textresponse';
-        		        $textfileinfo = array (
-        		                'contextid' => $context->id,
-        		                'component' => 'quiz_downloadsubmissions',
-        		                'filearea'  => 'content',
-        		                'itemid'    => 0,
-        		                'filepath'  => '/',
-        		                'filename'  => $textfilename . '.text');
+            // Set the download folder hierarchy. Create this here to reduce processing further down
+            $pathprefix = $prefix1 . '/' . $prefix2;
 
-        		        if (!$fs->file_exists(
-        		                $textfileinfo['contextid'],
-        		                $textfileinfo['component'],
-        		                $textfileinfo['filearea'],
-        		                $textfileinfo['itemid'],
-        		                $textfileinfo['filepath'],
-        		                $textfileinfo['filename'])) {
-    	                    $fs->create_file_from_string($textfileinfo, $qa->get_response_summary());
-    	                }
+            if ($data->folders == 'attemptwise') {
+                $pathprefix = $prefix2 . '/' . $prefix1;
+            }
 
-    	                $textfile = $fs->get_file(
-                            $textfileinfo['contextid'],
-                            $textfileinfo['component'],
-                            $textfileinfo['filearea'],
-                            $textfileinfo['itemid'],
-                            $textfileinfo['filepath'],
-                            $textfileinfo['filename']);
-        		    }
-    		    }
+            // Writing text response to a file.
+            $textfile = null;
+            $hastextresponse = false;
+            if ($data->textresponse == 1 && !empty($qa->get_response_summary())) { //combine the if statements to lower the need for compiler result guessing
+                $hastextresponse = true;
+                $textfilename = $prefix1 . ' - ' . $prefix2 . ' - ' . 'textresponse';
+                $textfileinfo = array (
+                        'contextid' => $context->id,
+                        'component' => 'quiz_downloadsubmissions',
+                        'filearea'  => 'content',
+                        'itemid'    => 0,
+                        'filepath'  => '/',
+                        'filename'  => $textfilename . '.text');
 
-    		    // Fetching attachments.
-    			$name = 'attachments';
+                if (!$fs->file_exists(
+                        $textfileinfo['contextid'],
+                        $textfileinfo['component'],
+                        $textfileinfo['filearea'],
+                        $textfileinfo['itemid'],
+                        $textfileinfo['filepath'],
+                        $textfileinfo['filename'])) {
+                    $fs->create_file_from_string($textfileinfo, $qa->get_response_summary());
+                }
 
-    			// Check if attachments are allowed as response.
-    			$has_responsefilearea_attachments = false;
-    			$response_file_areas = $qa->get_question()->qtype->response_file_areas();
-    			if (in_array($name, $response_file_areas)) {
-    				$has_responsefilearea_attachments = true;
-    			}
+                $textfile = $fs->get_file(
+                    $textfileinfo['contextid'],
+                    $textfileinfo['component'],
+                    $textfileinfo['filearea'],
+                    $textfileinfo['itemid'],
+                    $textfileinfo['filepath'],
+                    $textfileinfo['filename']);
 
-    			// Check if student has submitted any attachment.
-    			$has_submitted_attachments = false;
-    			$var_attachments = $qa->get_last_qt_var($name);
-    			if (isset($var_attachments)) {
-    			    $has_submitted_attachments = true;
-    			}
+                // II. File containing text response.
+                $pathfilename = $pathprefix . $textfile->get_filepath() . $prefix3 . 'textresponse';
+                $pathfilename = clean_param($pathfilename, PARAM_PATH);
+                $filesforzipping[$pathfilename] = $textfile;
+            }
 
-    			// Get files.
-    			if ($has_responsefilearea_attachments && $has_submitted_attachments) {
-    				$files = $qa->get_last_qt_files($name, $quba_contextid);
-    			} else {
-    				$files = array();
-    			}
+            // Fetching attachments.
+            $name = 'attachments';
 
-    			// Set the download folder hierarchy.
-    			if ($data->folders == 'questionwise') {
-        			$prefixedfilename = clean_filename($prefix1 . '/' . $prefix2);
-        			$pathprefix = $prefix1 . '/' . $prefix2;
-    			} else if ($data->folders == 'attemptwise') {
-    			    $prefixedfilename = clean_filename($prefix2 . '/' . $prefix1);
-    			    $pathprefix = $prefix2 . '/' . $prefix1;
-    			}
+            // Check if attachments are allowed as response.
+            $has_responsefilearea_attachments = false;
+            $response_file_areas = $qa->get_question()->qtype->response_file_areas();
+            if (in_array($name, $response_file_areas)) {
+                $has_responsefilearea_attachments = true;
+            }
 
-    			// Send files for zipping.
-    			// I. File attachments/submissions.
-    			$fs_count = 0;
-	    		foreach ($files as $zipfilepath => $file) {
-	    		    $fs_count++;
-	    			$zipfilename = $file->get_filename();
-// 	    			$pathfilename = $pathprefix . $file->get_filepath() . $prefix3 . 'filesubmission' . $fs_count . '_' . $zipfilename;
-	    			$pathfilename = $pathprefix . $file->get_filepath() . $prefix3 . 'filesubmission' . '_' . $zipfilename;
-	    			$pathfilename = clean_param($pathfilename, PARAM_PATH);
-	    			$filesforzipping[$pathfilename] = $file;
-	    		}
+            // Check if student has submitted any attachment.
+            $has_submitted_attachments = false;
+            $var_attachments = $qa->get_last_qt_var($name);
+            if (isset($var_attachments)) {
+                $has_submitted_attachments = true;
+            }
 
-	    		// II. File containing text response.
-	    		if ($textfile) {
-	    		    $zipfilename = $textfile->get_filename();
-// 	    		    $pathfilename = $pathprefix . $textfile->get_filepath() . $prefix3 . $zipfilename;
-	    		    $pathfilename = $pathprefix . $textfile->get_filepath() . $prefix3 . 'textresponse';
-	    		    $pathfilename = clean_param($pathfilename, PARAM_PATH);
-	    		    $filesforzipping[$pathfilename] = $textfile;
-	    		}
+            // Get files.
+            if ($has_responsefilearea_attachments && $has_submitted_attachments) {
+                $files = $qa->get_last_qt_files($name, $quba_contextid);
+            } else {
+                $files = array();
+            }
 
-	    		// III. File containing question text.
-	    		if (!empty($files) | $hastextresponse) {
-    	    		if ($questiontextfile) {
-    	    		    $zipfilename = $questiontextfile->get_filename();
-    // 	    		    $pathfilename = $pathprefix . $textfile->get_filepath() . $prefix3 . $zipfilename;
+            // Set the download folder hierarchy.
+            if ($data->folders == 'questionwise') {
+                $pathprefix = $prefix1 . '/' . $prefix2;
+            } else if ($data->folders == 'attemptwise') {
+                $pathprefix = $prefix2 . '/' . $prefix1;
+            }
 
-    	    		    if ($data->folders == 'questionwise') {
-    	    		        $pathfilename = $prefix1 . $questiontextfile->get_filepath() . 'Question text';
-    	    		    } else if ($data->folders == 'attemptwise') {
-    	    		        $pathfilename = $pathprefix . $questiontextfile->get_filepath() . 'Question text';
-    	    		    }
-    	    		    $pathfilename = clean_param($pathfilename, PARAM_PATH);
-    	    		    $filesforzipping[$pathfilename] = $questiontextfile;
-    	    		}
-	    		}
-    		}
+            // Send files for zipping.
+            // I. File attachments/submissions.
+            foreach ($files as $zipfilepath => $file) {
+                $zipfilename = $file->get_filename();
+                $pathfilename = $pathprefix . $file->get_filepath() . $prefix3 . 'filesubmission' . '_' . $zipfilename;
+                $pathfilename = clean_param($pathfilename, PARAM_PATH);
+                $filesforzipping[$pathfilename] = $file;
+            }
+
+            // II. File containing text response.
+            if ($textfile) {
+                $pathfilename = $pathprefix . $textfile->get_filepath() . $prefix3 . 'textresponse';
+                $pathfilename = clean_param($pathfilename, PARAM_PATH);
+                $filesforzipping[$pathfilename] = $textfile;
+            }
+
+            // III. File containing question text.
+            if (!empty($files) | $hastextresponse && $questiontextfile) {
+                $pathfilename = $prefix1 . $questiontextfile->get_filepath() . 'Question text';
+
+                if ($data->folders == 'attemptwise') {
+                    $pathfilename = $pathprefix . $questiontextfile->get_filepath() . 'Question text';
+                }
+                $pathfilename = clean_param($pathfilename, PARAM_PATH);
+                $filesforzipping[$pathfilename] = $questiontextfile;
+            }
     	}
 
-    	$hassubmissions = true;
     	if (count($filesforzipping) == 0) {
-    	    $hassubmissions = false;
-    	} else if ($zipfile = $this->pack_files($filesforzipping)) {
+    	    return false;
+    	}
+
+        if ($zipfile = $this->pack_files($filesforzipping)) {
     		// Send file and delete after sending.
     		send_temp_file($zipfile, $filename);
     		// We will not get here - send_temp_file calls exit.
     	}
 
-    	return $hassubmissions;
+    	return true;
     }
 
     /**
