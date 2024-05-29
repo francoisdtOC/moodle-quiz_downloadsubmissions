@@ -203,7 +203,8 @@ class quiz_downloadsubmissions_report extends quiz_attempts_report {
 		        FROM		{user} 				u
 		        LEFT JOIN 	{quiz_attempts} 	quiza	ON	quiza.userid 		= u.id
 		        										AND quiza.quiz 			= $quiz->id
-		        JOIN 		{question_attempts} qa 		ON	qa.questionusageid	= quiza.uniqueid		/*7*/
+			JOIN 		{question_attempts} qa 		ON	qa.questionusageid	= quiza.uniqueid,		/*7*/
+                         {question} q 
 		       /* JOIN 		{user_enrolments} 	ej1_ue 	ON	ej1_ue.userid 		= u.id
 		        JOIN 		{enrol} 			ej1_e 	ON	(ej1_e.id 			= ej1_ue.enrolid
 														AND ej1_e.courseid 		= $course->id) */
